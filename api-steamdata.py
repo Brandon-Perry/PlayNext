@@ -1,31 +1,21 @@
 import requests
 import json
 import pickle
-
-
-key = 'E7A8E033472E33429602FDC1FEAC4C71'
-
-# steamId = 76561198083486927
-# steamId = 76561198100198908
-# steam_id = 76561198003962089
-
-# response = requests.get(f'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key={key}&format=json&steamid={steamId}&include_played_free_games=true')
-
-# response = requests.get(f'http://api.steampowered.com/ISteamUser/GetFriendList/v0001/?key={key}&steamid={steamId}&relationship=friend')
-
-# friendJson = response.json()
-
-# print(friendJson['friendslist'])
+import os
+from dotenv import load_dotenv
+import psycopg2
 
 
 def collectUserData(count):
-    ''' Used for collecting and seeding user data from Steam. Uses friendsToGather for storing future friends to grab'''
+    ''' Used for collecting and seeding user data from Steam.'''
 
-    seed_steamId = 76561198100198908
+    seed_steamId = os.getenv('SEED_STEAM_ID')
+    key = os.getenv('STEAM_KEY')
     
     #To be reassigned later
-    user_data = None
+    user_memo = None
     que = None
+    game_memo = None
 
     #Fetch pickled que, or create one if it doesn't exist 
     try:
@@ -37,83 +27,79 @@ def collectUserData(count):
         # print('created pickle')
 
 
-    #Open the userData_raw json file, which contains all of the current user data
-    user_data = open_json('userData_Raw.json')
+    #Grab the users and games stored in the database to ensure that there are no duplicate entries
+    user_memo = grab_current_users_DB()
+    game_memo = grab_current_games_DB()
 
     #While the iteratations are below the count arg, fetch the user's steam data, update the JSON, and adjust the que accordingly to ensure that nothing is lost if error
-
     iterations = 0
-    key = 'E7A8E033472E33429602FDC1FEAC4C71'
-
     no_games_reachable = 0
 
+
     while (iterations <= count and len(que) > 0):
-        iterations += 1
         print('iterations', iterations)
+        iterations += 1
         #items in pickled list are stored as steam Ids
         steamId = que.pop(0)
         print('current steam user', steamId)
 
+        #Re-pickle que and overwrite
+        pickle.dump(que, open('pickled_que.pql', 'wb'))
+
+        #If the user doesn't exist already, add them to the database and memo
+        if steamId not in user_memo:
+            insert_user_data_DB(steamId)
+            user_memo.append(steamId)
+        else:
+            #Otherwise, continue because this person has been explored already
+            continue
 
         friends_list = grab_user_friends(steamId, key)
 
+        #Some people don't have friends. In which case pass and add games
         if friends_list == {}:
             pass
         elif friends_list == None:
+            #Will come back none if profile is inaccessible 
             continue
         else:
-            que = que + [friend['steamid'] for friend in friends_list if (friend['steamid'] not in que and friend['steamid'] not in user_data.keys())]
+            #If user has friends, add ones not already explored in que
+            que = que + [friend['steamid'] for friend in friends_list if (friend['steamid'] not in que and friend['steamid'] not in user_memo)]
             #Re-pickle que and overwrite
             pickle.dump(que, open('pickled_que.pql', 'wb'))
 
-        #Create entry for user in the json 
-        user_data[steamId] = []
 
         #Make an API request to grab all the current user's steam info 
         games_list = grab_user_games(steamId, key)
+        print(games_list)
 
         if games_list == {}:
+            #Person has no games or is otherwise unreachable
             no_games_reachable += 1
             continue
 
         for game in games_list: 
-            # print('about to print game')
-            # print(game)
+
+            #If the player hasn't played it, don't bother
             if game['playtime_forever'] == 0:
-                # print('continued')
                 continue
-            
-            #Add the relevant information to the user data  object
-            
-            #Put game time as a value to the game id 
-            game_dict = {game['appid']: game['playtime_forever']}
 
-            #Add the dictionary to the user_data dictionary with the user steam id as the key
-            user_data[steamId].append(game_dict)            
-            # print('added game')
-        
+            #See if the game is currently in the library, add it if not
+            if game['appid'] not in game_memo:
+                print(game)
+                insert_game_data_DB(game['appid'])
+                game_memo.append(game['appid'])
 
-        #Update the json file to reflect the current state of user_data
-        with open('userData_Raw.json', 'w') as user_data_json:
-            json.dump(user_data, user_data_json)
-            # print('updated json')
+            #Add the game information to the database
+            insert_game_user_data_DB(steamId, game['appid'], game['playtime_forever'])
+
+
 
     print(f'Out of {count} searched, {no_games_reachable} failed to get games. {no_games_reachable / count}% success')
 
 
                             
 
-
-
-
-               
-
-
-def open_json(jsonFileString):
-    with open(jsonFileString) as user_data_json:
-        data = json.load(user_data_json)
-        # print('opened json')
-        return data
 
 
 def grab_user_games(steamId, key):
@@ -137,6 +123,7 @@ def grab_user_games(steamId, key):
         return games_list
     else:
         raise Exception('Games request was not a 200', response.status_code)
+
 
 def grab_user_friends(steamId, key):
 
@@ -168,7 +155,158 @@ def grab_user_friends(steamId, key):
         return None
 
 
+def insert_user_data_DB(user_steam_id):
 
+    try:
+
+        DB_NAME = os.getenv('DB_STEAMDATA')
+        DB_USER = os.getenv('DB_USERNAME')
+        DB_PASSWORD = os.getenv('DB_PASSWORD')
+
+        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+
+        cur = conn.cursor()
+
+        cur.execute(
+            '''
+            INSERT INTO users (user_steam_id)
+            VALUES (%s)
+            ''', [user_steam_id]
+        )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        raise e
+
+
+def insert_game_data_DB(game_steam_id):
+
+    try:
+
+        DB_NAME = os.getenv('DB_STEAMDATA')
+        DB_USER = os.getenv('DB_USERNAME')
+        DB_PASSWORD = os.getenv('DB_PASSWORD')
+
+        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+
+        cur = conn.cursor()
+
+        cur.execute(
+            '''
+            INSERT INTO games (game_steam_id)
+            VALUES (%s)
+            ''', [game_steam_id]
+        )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        raise e
+
+
+def insert_game_user_data_DB(user_steam_id, game_steam_id, playtime):
+    try:
+        DB_NAME = os.getenv('DB_STEAMDATA')
+        DB_USER = os.getenv('DB_USERNAME')
+        DB_PASSWORD = os.getenv('DB_PASSWORD')
+
+        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+
+        cur = conn.cursor()
+
+        cur.execute(
+            '''
+            INSERT INTO user_games_data (user_id, game_id, playtime)
+            VALUES (%s, %s, %s)
+            ''', [user_steam_id, game_steam_id, playtime]
+            )
+
+        conn.commit()
+        cur.close()
+        conn.close()
         
 
-collectUserData(10)
+    except Exception as e:
+        raise e
+
+    #INSERT INTO users (user_steam_id)
+    #Insert into games (game_steam_id)
+    #INSERT INTO user_games_data (user_id, game_id, playtime)
+
+
+def grab_current_users_DB():
+
+    try:
+
+        DB_NAME = os.getenv('DB_STEAMDATA')
+        DB_USER = os.getenv('DB_USERNAME')
+        DB_PASSWORD = os.getenv('DB_PASSWORD')
+
+        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+
+        cur = conn.cursor()
+
+        cur.execute(
+            '''
+            SELECT * FROM users
+            '''
+        )
+
+        users_table = cur.fetchall()
+
+        result = []
+        for user in users_table:
+            result.append(user[1])
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return result
+
+    except Exception as e:
+        raise e
+
+
+def grab_current_games_DB():
+
+    try:
+
+        DB_NAME = os.getenv('DB_STEAMDATA')
+        DB_USER = os.getenv('DB_USERNAME')
+        DB_PASSWORD = os.getenv('DB_PASSWORD')
+
+        conn = psycopg2.connect(dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD)
+
+        cur = conn.cursor()
+
+        cur.execute(
+            '''
+            SELECT * FROM games
+            '''
+        )
+
+        games_table = cur.fetchall()
+
+        result = []
+        for user in games_table:
+            result.append(user[1])
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return result
+
+    except Exception as e:
+        raise e
+
+
+
+
+collectUserData(1)
