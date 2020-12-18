@@ -31,6 +31,11 @@ def collectUserData(count):
     user_memo = grab_current_users_DB()
     game_memo = grab_current_games_DB()
 
+    #Converted to sets for performance increase
+    user_memo = set(user_memo)
+    game_memo = set(game_memo)
+    # print(game_memo)
+
     #While the iteratations are below the count arg, fetch the user's steam data, update the JSON, and adjust the que accordingly to ensure that nothing is lost if error
     iterations = 0
     no_games_reachable = 0
@@ -49,7 +54,7 @@ def collectUserData(count):
         #If the user doesn't exist already, add them to the database and memo
         if steamId not in user_memo:
             insert_user_data_DB(steamId)
-            user_memo.append(steamId)
+            user_memo.add(steamId)
         else:
             #Otherwise, continue because this person has been explored already
             continue
@@ -71,7 +76,7 @@ def collectUserData(count):
 
         #Make an API request to grab all the current user's steam info 
         games_list = grab_user_games(steamId, key)
-        print(games_list)
+        # print(games_list)
 
         if games_list == {}:
             #Person has no games or is otherwise unreachable
@@ -85,17 +90,17 @@ def collectUserData(count):
                 continue
 
             #See if the game is currently in the library, add it if not
-            if game['appid'] not in game_memo:
-                print(game)
+            if str(game['appid']) not in game_memo:
+                # print(game)
                 insert_game_data_DB(game['appid'])
-                game_memo.append(game['appid'])
+                game_memo.add(game['appid'])
 
             #Add the game information to the database
             insert_game_user_data_DB(steamId, game['appid'], game['playtime_forever'])
 
 
 
-    print(f'Out of {count} searched, {no_games_reachable} failed to get games. {no_games_reachable / count}% success')
+    print(f'Out of {count} searched, {no_games_reachable} failed to get games. {(count-no_games_reachable) / count * 100}% success')
 
 
                             
@@ -205,8 +210,8 @@ def insert_game_data_DB(game_steam_id):
         cur.close()
         conn.close()
 
-    except Exception as e:
-        raise e
+    except:
+        return
 
 
 def insert_game_user_data_DB(user_steam_id, game_steam_id, playtime):
@@ -307,6 +312,7 @@ def grab_current_games_DB():
         raise e
 
 
+    
 
 
-collectUserData(1)
+collectUserData(10)
