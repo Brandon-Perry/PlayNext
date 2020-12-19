@@ -66,6 +66,7 @@ def collectUserData(count):
             pass
         elif friends_list == None:
             #Will come back none if profile is inaccessible 
+            no_games_reachable += 1
             continue
         else:
             #If user has friends, add ones not already explored in que
@@ -77,13 +78,14 @@ def collectUserData(count):
         #Make an API request to grab all the current user's steam info 
         games_list = grab_user_games(steamId, key)
         # print(games_list)
-
+        # print(games_list)
         if games_list == {}:
             #Person has no games or is otherwise unreachable
             no_games_reachable += 1
             continue
 
         for game in games_list: 
+            # print(game)
 
             #If the player hasn't played it, don't bother
             if game['playtime_forever'] == 0:
@@ -91,7 +93,6 @@ def collectUserData(count):
 
             #See if the game is currently in the library, add it if not
             if str(game['appid']) not in game_memo:
-                # print(game)
                 insert_game_data_DB(game['appid'])
                 game_memo.add(game['appid'])
 
@@ -315,4 +316,4 @@ def grab_current_games_DB():
     
 
 
-collectUserData(10)
+collectUserData(10000)
