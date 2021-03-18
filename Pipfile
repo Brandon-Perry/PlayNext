@@ -8,6 +8,13 @@ requests = "*"
 psycopg2-binary = "*"
 python-dotenv = "*"
 sqlalchemy = "*"
+flask = "*"
+ipykernel = "*"
+pandas = "*"
+matplotlib = "*"
+numpy = "*"
+scikit-surprise = "*"
+seaborn = "*"
 
 [dev-packages]
 

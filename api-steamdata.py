@@ -316,4 +316,4 @@ def grab_current_games_DB():
     
 
 
-collectUserData(10000)
+collectUserData(1000)
